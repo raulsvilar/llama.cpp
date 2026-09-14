@@ -1,0 +1,134 @@
+name: Server CUDA 13 NCCL (sm86)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [qwen4exp-mtp-ondirect]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: server-cuda13-nccl-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  server-cuda13-amd64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CUDA_VERSION: 13.3.0
+      CUDA_ARCHITECTURES: 86-real
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Image metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          short_sha="${GITHUB_SHA:0:12}"
+          commit_tag="$image:server-cuda13-sm86-$short_sha-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          {
+            echo "image=$image"
+            echo "short_sha=$short_sha"
+            echo "commit_tag=$commit_tag"
+            echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "tags<<EOF"
+            echo "$commit_tag"
+            echo "$image:server-cuda13-sm86"
+            echo "$image:server-cuda13"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Reserve disk space for CUDA
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check validation script syntax
+        run: |
+          set -euo pipefail
+          sh -n .devops/cuda-nccl.sh
+          sh -n .devops/check-cuda-runtime.sh
+
+      - name: Build and validate server image
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        with:
+          context: .
+          file: .devops/cuda.Dockerfile
+          target: server
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            CUDA_VERSION=${{ env.CUDA_VERSION }}
+            CUDA_DOCKER_ARCH=${{ env.CUDA_ARCHITECTURES }}
+            GGML_CUDA_NCCL=ON
+            LLAMA_SERVER_ONLY=ON
+            LLAMA_SERVER_FEATURE_CHECK=ON
+            BUILD_JOBS=2
+            BUILD_DATE=${{ steps.meta.outputs.created }}
+            APP_VERSION=${{ steps.meta.outputs.short_sha }}
+            APP_REVISION=${{ github.sha }}
+            IMAGE_URL=${{ github.server_url }}/${{ github.repository }}
+            IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
+          labels: |
+            org.opencontainers.image.description=Experimental Qwen3.8 MTP/on-direct server; CUDA 13.3.0; NCCL ON; sm_86 only (RTX 3060)
+          cache-from: type=gha,scope=server-cuda13-sm86-nccl
+          cache-to: type=gha,mode=max,scope=server-cuda13-sm86-nccl
+
+      - name: Smoke test the final image without a GPU
+        env:
+          IMAGE: ${{ steps.meta.outputs.commit_tag }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/sh "$IMAGE" -ec '
+            /app/llama-server --version
+            /app/llama-server --help > /tmp/server-help.txt 2>&1
+            for feature in --lazy-mode on-direct draft-mtp ngram-mod; do
+              grep -F -- "$feature" /tmp/server-help.txt
+            done
+            cd /app
+            sha256sum -c validation/nccl-sha256.txt
+            cat validation/cmake-nccl.txt validation/cuda-needed.txt validation/runtime/cuda-ldd.txt
+            grep -E "libnccl\.so[^ ]* => /app/" validation/runtime/cuda-ldd.txt
+            if grep -F "not found" validation/runtime/cuda-ldd.txt; then exit 1; fi
+          '
+          container=$(docker create "$IMAGE")
+          trap 'docker rm "$container" > /dev/null' EXIT
+          docker cp "$container:/app/validation" validation
+
+      - name: Upload validation evidence
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: server-cuda13-sm86-${{ steps.meta.outputs.short_sha }}-validation
+          path: validation/
+          if-no-files-found: error
+
+      - name: Publish validated image directly to GHCR
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            docker push "$tag"
+          done <<< "$TAGS"
+          printf '%s\n' "$TAGS" >> "$GITHUB_STEP_SUMMARY"
