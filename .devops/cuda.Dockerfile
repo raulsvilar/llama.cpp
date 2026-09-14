@@ -30,6 +30,11 @@ FROM ${BASE_CUDA_DEV_CONTAINER} AS build
 ARG GCC_VERSION
 # CUDA architecture to build for (defaults to all supported archs)
 ARG CUDA_DOCKER_ARCH=default
+# Explicit ON requires NCCL; default keeps upstream's optional discovery.
+ARG GGML_CUDA_NCCL=default
+ARG LLAMA_SERVER_ONLY=OFF
+ARG LLAMA_SERVER_FEATURE_CHECK=OFF
+ARG BUILD_JOBS=0
 
 RUN apt-get update && \
     apt-get install -y gcc-${GCC_VERSION} g++-${GCC_VERSION} build-essential cmake python3 python3-pip git libssl-dev libgomp1
@@ -42,14 +47,45 @@ COPY . .
 
 COPY --from=web /app/tools/ui/dist tools/ui/dist
 
-RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
+RUN set -eu; \
+    mkdir -p /app/validation; \
+    CMAKE_ARGS=""; \
+    if [ "${GGML_CUDA_NCCL}" = "ON" ]; then sh .devops/cuda-nccl.sh prepare; fi && \
+    if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
     export CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_DOCKER_ARCH}"; \
     fi && \
-    cmake -B build -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_BUILD_TESTS=OFF ${CMAKE_ARGS} -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined . && \
-    cmake --build build --config Release -j$(nproc)
+    case "${GGML_CUDA_NCCL}" in \
+      ON) CMAKE_ARGS="${CMAKE_ARGS} -DGGML_CUDA_NCCL=ON -DCMAKE_REQUIRE_FIND_PACKAGE_NCCL=ON" ;; \
+      OFF) CMAKE_ARGS="${CMAKE_ARGS} -DGGML_CUDA_NCCL=OFF" ;; \
+      default) ;; \
+      *) echo "GGML_CUDA_NCCL must be default, ON or OFF" >&2; exit 1 ;; \
+    esac && \
+    BUILD_TARGET=all && \
+    if [ "${LLAMA_SERVER_ONLY}" = "ON" ]; then \
+      CMAKE_ARGS="${CMAKE_ARGS} -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_EXAMPLES=OFF"; \
+      BUILD_TARGET=llama-server; \
+    fi && \
+    if cmake -B build -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DLLAMA_BUILD_TESTS=OFF ${CMAKE_ARGS} -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined . > /app/validation/configure.log 2>&1; then \
+      cat /app/validation/configure.log; \
+    else \
+      cat /app/validation/configure.log; exit 1; \
+    fi && \
+    if [ "${BUILD_JOBS}" = "0" ]; then BUILD_JOBS=$(nproc); fi && \
+    cmake --build build --config Release --target "$BUILD_TARGET" -j"${BUILD_JOBS}" && \
+    if [ "${LLAMA_SERVER_FEATURE_CHECK}" = "ON" ]; then \
+      cmake -DSERVER=/app/build/bin/llama-server -DOUTPUT_DIR=/app/validation -P .devops/check-server-features.cmake; \
+    fi
 
 RUN mkdir -p /app/lib && \
     find build -name "*.so*" -exec cp -P {} /app/lib \;
+
+RUN if [ "${GGML_CUDA_NCCL}" = "ON" ]; then \
+      sh .devops/cuda-nccl.sh collect /app/build /app/lib /app/validation && \
+      sh .devops/check-cuda-runtime.sh /app/lib /app/validation/build /usr/local/cuda/lib64/stubs/libcuda.so; \
+    fi
+
+RUN mkdir -p /app/server && cp build/bin/llama-server /app/server/ && \
+    if [ "${LLAMA_SERVER_ONLY}" != "ON" ]; then cp build/bin/llama /app/server/; fi
 
 RUN mkdir -p /app/full \
     && cp build/bin/* /app/full \
@@ -122,9 +158,29 @@ ENTRYPOINT [ "/app/llama-cli" ]
 ### Server, Server only
 FROM base AS server
 
+ARG GGML_CUDA_NCCL=default
+ARG LLAMA_SERVER_FEATURE_CHECK=OFF
+ARG CUDA_VERSION
+ARG CUDA_DOCKER_ARCH=default
+LABEL ai.llama.cpp.cuda.version=$CUDA_VERSION \
+      ai.llama.cpp.cuda.nccl=$GGML_CUDA_NCCL \
+      ai.llama.cpp.cuda.architectures=$CUDA_DOCKER_ARCH
+
 ENV LLAMA_ARG_HOST=0.0.0.0
 
-COPY --from=build /app/full/llama /app/full/llama-server /app
+COPY --from=build /app/server/ /app
+COPY --from=build /app/validation/ /app/validation/
+
+RUN --mount=type=bind,from=build,source=/app/.devops,target=/tmp/checks \
+    --mount=type=bind,from=build,source=/usr/local/cuda/lib64/stubs,target=/tmp/cuda-stubs \
+    if [ "${GGML_CUDA_NCCL}" = "ON" ]; then \
+      sh /tmp/checks/check-cuda-runtime.sh /app /app/validation/runtime /tmp/cuda-stubs/libcuda.so; \
+    elif [ "${LLAMA_SERVER_FEATURE_CHECK}" = "ON" ]; then \
+      /app/llama-server --help > /app/validation/server-help.txt 2>&1 && \
+      for feature in --lazy-mode on-direct draft-mtp ngram-mod; do \
+        grep -F -- "$feature" /app/validation/server-help.txt || exit 1; \
+      done; \
+    fi
 
 WORKDIR /app
 

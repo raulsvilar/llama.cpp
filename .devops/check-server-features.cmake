@@ -1,0 +1,38 @@
+cmake_minimum_required(VERSION 3.22)
+
+if (NOT DEFINED SERVER)
+    message(FATAL_ERROR "Pass -DSERVER=/path/to/llama-server")
+endif()
+
+execute_process(COMMAND "${SERVER}" --version RESULT_VARIABLE status OUTPUT_VARIABLE version ERROR_VARIABLE errors)
+if (NOT "${status}" STREQUAL "0")
+    message(FATAL_ERROR "llama-server --version failed (${status}): ${errors}")
+endif()
+set(version "${version}${errors}")
+message(STATUS "${version}")
+
+execute_process(COMMAND "${SERVER}" --help RESULT_VARIABLE status OUTPUT_VARIABLE help ERROR_VARIABLE errors)
+if (NOT "${status}" STREQUAL "0")
+    message(FATAL_ERROR "llama-server --help failed (${status}): ${errors}")
+endif()
+foreach(feature IN ITEMS "--lazy-mode" "on-direct" "draft-mtp" "ngram-mod")
+    string(FIND "${help}" "${feature}" found)
+    if (found EQUAL -1)
+        message(FATAL_ERROR "llama-server --help is missing ${feature}")
+    endif()
+    message(STATUS "llama-server --help: ${feature} present")
+endforeach()
+
+foreach(mode IN ITEMS auto off on on-direct)
+    execute_process(COMMAND "${SERVER}" --lazy-mode "${mode}" --spec-type draft-mtp,ngram-mod --parallel 1 --help
+        RESULT_VARIABLE status OUTPUT_QUIET ERROR_VARIABLE errors)
+    if (NOT "${status}" STREQUAL "0")
+        message(FATAL_ERROR "Cannot parse lazy-mode ${mode} with draft-mtp,ngram-mod: ${errors}")
+    endif()
+endforeach()
+
+if (DEFINED OUTPUT_DIR)
+    file(MAKE_DIRECTORY "${OUTPUT_DIR}")
+    file(WRITE "${OUTPUT_DIR}/server-help.txt" "${help}")
+    file(WRITE "${OUTPUT_DIR}/server-version.txt" "${version}")
+endif()
