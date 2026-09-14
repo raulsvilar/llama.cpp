@@ -82,6 +82,7 @@ jobs:
             CUDA_VERSION=${{ env.CUDA_VERSION }}
             CUDA_DOCKER_ARCH=${{ env.CUDA_ARCHITECTURES }}
             GGML_CUDA_NCCL=ON
+            GGML_CUDA_FA_QUANTS=all
             LLAMA_SERVER_ONLY=ON
             LLAMA_SERVER_FEATURE_CHECK=ON
             BUILD_JOBS=2
@@ -108,6 +109,8 @@ jobs:
             done
             cd /app
             sha256sum -c validation/nccl-sha256.txt
+            grep -Fx "GGML_CUDA_FA:BOOL=ON" validation/cmake-fa-quants.txt
+            grep -Fx "GGML_CUDA_FA_QUANTS:STRING=all" validation/cmake-fa-quants.txt
             cat validation/cmake-nccl.txt validation/cuda-needed.txt validation/runtime/cuda-ldd.txt
             grep -E "libnccl\.so[^ ]* => /app/" validation/runtime/cuda-ldd.txt
             if grep -F "not found" validation/runtime/cuda-ldd.txt; then exit 1; fi

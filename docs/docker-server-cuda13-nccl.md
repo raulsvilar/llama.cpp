@@ -60,11 +60,14 @@ The existing `.devops/cuda.Dockerfile` is extended. Its default build still buil
 | `CUDA_VERSION` | `12.8.1` | `13.3.0`, matching upstream's CUDA13 workflow |
 | `CUDA_DOCKER_ARCH` | `default` | `86-real` |
 | `GGML_CUDA_NCCL` | `default` | `ON`, with required discovery |
+| `GGML_CUDA_FA_QUANTS` | `default` (upstream selection) | `all`, every supported FlashAttention K/V type combination |
 | `LLAMA_SERVER_ONLY` | `OFF` | `ON`, build only `llama-server` and its dependencies |
 | `LLAMA_SERVER_FEATURE_CHECK` | `OFF` | `ON` |
 | `BUILD_JOBS` | `0` (nproc) | `2`, to bound runner memory use |
 
 `GGML_NATIVE=OFF`, `GGML_CUDA=ON` and dynamic backends are retained. Building only sm_86 avoids generating all upstream CUDA13 architectures. No build-time speedup measurement is claimed.
+
+The Action passes `-DGGML_CUDA_FA_QUANTS=all`, the current replacement for the deprecated `GGML_CUDA_FA_ALL_QUANTS=ON`. This compiles all FlashAttention K/V combinations of f16, bf16, q4_0, q4_1, q5_0, q5_1 and q8_0, at the cost of a longer build. Configure records `GGML_CUDA_FA=ON` and the exact selection in `/app/validation/cmake-fa-quants.txt`; the final-image smoke test requires both settings. This option selects FlashAttention kernels, not the GGUF model weight format or the runtime KV cache types.
 
 When NCCL is explicitly ON:
 

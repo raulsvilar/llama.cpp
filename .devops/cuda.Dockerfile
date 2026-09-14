@@ -32,6 +32,7 @@ ARG GCC_VERSION
 ARG CUDA_DOCKER_ARCH=default
 # Explicit ON requires NCCL; default keeps upstream's optional discovery.
 ARG GGML_CUDA_NCCL=default
+ARG GGML_CUDA_FA_QUANTS=default
 ARG LLAMA_SERVER_ONLY=OFF
 ARG LLAMA_SERVER_FEATURE_CHECK=OFF
 ARG BUILD_JOBS=0
@@ -54,6 +55,9 @@ RUN set -eu; \
     if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
     export CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_DOCKER_ARCH}"; \
     fi && \
+    if [ "${GGML_CUDA_FA_QUANTS}" != "default" ]; then \
+      CMAKE_ARGS="${CMAKE_ARGS} -DGGML_CUDA_FA_QUANTS=${GGML_CUDA_FA_QUANTS}"; \
+    fi && \
     case "${GGML_CUDA_NCCL}" in \
       ON) CMAKE_ARGS="${CMAKE_ARGS} -DGGML_CUDA_NCCL=ON -DCMAKE_REQUIRE_FIND_PACKAGE_NCCL=ON" ;; \
       OFF) CMAKE_ARGS="${CMAKE_ARGS} -DGGML_CUDA_NCCL=OFF" ;; \
@@ -69,6 +73,10 @@ RUN set -eu; \
       cat /app/validation/configure.log; \
     else \
       cat /app/validation/configure.log; exit 1; \
+    fi && \
+    if [ "${GGML_CUDA_FA_QUANTS}" != "default" ]; then \
+      grep -Fx 'GGML_CUDA_FA:BOOL=ON' build/CMakeCache.txt > /app/validation/cmake-fa-quants.txt && \
+      grep -Fx "GGML_CUDA_FA_QUANTS:STRING=${GGML_CUDA_FA_QUANTS}" build/CMakeCache.txt >> /app/validation/cmake-fa-quants.txt; \
     fi && \
     if [ "${BUILD_JOBS}" = "0" ]; then BUILD_JOBS=$(nproc); fi && \
     cmake --build build --config Release --target "$BUILD_TARGET" -j"${BUILD_JOBS}" && \
