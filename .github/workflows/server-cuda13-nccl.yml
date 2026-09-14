@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      CUDA_VERSION: 13.3.0
+      CUDA_VERSION: 13.3.1
       CUDA_ARCHITECTURES: 86-real
     steps:
       - name: Check out source
@@ -92,7 +92,7 @@ jobs:
             IMAGE_URL=${{ github.server_url }}/${{ github.repository }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
           labels: |
-            org.opencontainers.image.description=Experimental Qwen3.8 MTP/on-direct server; CUDA 13.3.0; NCCL ON; sm_86 only (RTX 3060)
+            org.opencontainers.image.description=Experimental Qwen3.8 MTP/on-direct server; CUDA 13.3.1; NCCL ON; sm_86 only (RTX 3060)
           cache-from: type=gha,scope=server-cuda13-sm86-nccl
           cache-to: type=gha,mode=max,scope=server-cuda13-sm86-nccl
 

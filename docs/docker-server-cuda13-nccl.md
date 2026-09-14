@@ -57,7 +57,7 @@ The existing `.devops/cuda.Dockerfile` is extended. Its default build still buil
 
 | Argument | Default | This workflow |
 | --- | --- | --- |
-| `CUDA_VERSION` | `12.8.1` | `13.3.0`, matching upstream's CUDA13 workflow |
+| `CUDA_VERSION` | `12.8.1` | `13.3.1`, matching upstream's CUDA13 workflow |
 | `CUDA_DOCKER_ARCH` | `default` | `86-real` |
 | `GGML_CUDA_NCCL` | `default` | `ON`, with required discovery |
 | `GGML_CUDA_FA_QUANTS` | `default` (upstream selection) | `all`, every supported FlashAttention K/V type combination |
@@ -84,7 +84,7 @@ The loaded image is then smoke-tested again without that mount. Version/help com
 
 ## Action and tags
 
-`.github/workflows/server-cuda13-nccl.yml` contains one job, one Buildx build, target `server`, `linux/amd64`, CUDA 13.3.0 and NCCL ON. No CPU/ARM/full/light matrix, upstream workflow dependency or manifest-merging job is used. The CPU backend libraries remain available inside the CUDA image for normal offloading/fallback behavior.
+`.github/workflows/server-cuda13-nccl.yml` contains one job, one Buildx build, target `server`, `linux/amd64`, CUDA 13.3.1 and NCCL ON. No CPU/ARM/full/light matrix, upstream workflow dependency or manifest-merging job is used. The CPU backend libraries remain available inside the CUDA image for normal offloading/fallback behavior.
 
 The image is loaded into the runner, tested, and then that same job pushes it directly to `ghcr.io/raulsvilar/llama.cpp` using `GITHUB_TOKEN` with `packages: write`. Tags are:
 
